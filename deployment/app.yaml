@@ -1,0 +1,28 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: demoapp
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: demoapp
+    spec:
+      containers:
+      - name: demoapp
+        image: registry.ng.bluemix.net/rmoe/demoapp:$TAG
+        imagePullPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demoapp
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+  selector:
+    app: demoapp
