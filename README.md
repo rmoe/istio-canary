@@ -31,10 +31,22 @@ Template" section of the Jenkins configuration.
 1. A Python pod using the image python:3-alpine. This pod is used to install
    the application for running tests and building the image in a subsequent
    step.
+
+   ![Python container](images/python-container.png)
+
 2. A Docker pod using the image docker. This pod is used to build the image and
-   push it to the IBM Container Registry.
+   push it to the IBM Container Registry. Additionally two environment
+   variables must be defined. `REGISTRY_TOKEN` is a token which allows access
+   to the IBM Container Registry and `IMAGE_REGISTRY` is the container registry
+   path. For IBM container registry it is registry.ng.bluemix.net/<your namespace>.
+
+   ![Docker container](images/docker-container.png)
+
 3. A kubectl pod using the image lachlanevenson/k8s-kubectl. This pod is used to
    deploy the application to Kubernetes.
+
+   ![Kubectl container](images/kubectl-container.png)
+
 
 ### 2. Sample Application
 The sample application uses Flask and just returns its version.
@@ -196,8 +208,8 @@ pipeline {
       steps {
         container('docker') {
           sh 'docker login -u token -p ${REGISTRY_TOKEN} registry.ng.bluemix.net'
-          sh 'docker build -t $IMAGE_REPO/demoapp:$TAG .'
-          sh 'docker push $IMAGE_REPO/demoapp:$TAG'
+          sh 'docker build -t $IMAGE_REGISTRY/demoapp:$TAG .'
+          sh 'docker push $IMAGE_REGISTRY/demoapp:$TAG'
         }
       }
     }
