@@ -10,20 +10,34 @@
 
 ### 1. Prerequisites
 
-It's assumed you have a Kubernetes cluster with Istio installed. To install
-Jenkins follow the instructions [here](...).
+1. A Kubernetes cluster with Istio installed
+2. Jenkins installed on that cluster
+3. A git repository
 
-Automatic sidecar injection needs to be disabled in Jenkins.
+
+#### Configuring Jenkins
+
+Automatic sidecar injection needs to be disabled for the Jenkins worker pods.
 Under "Manage Jenkins" > "Configure System" > "Cloud" > "Kubernetes Pod Template"
 add a new Pod Annotation with a key of `sidecar.istio.io/inject` and a value of
 `false`.
 
 ![Pod Annotation](images/annotation.png)
 
-You'll also need a git repository to commit the sample application.
+
+Three additional containers need to be configured in the "Kubernetes Pod
+Template" section of the Jenkins configuration.
+
+1. A Python pod using the image python:3-alpine. This pod is used to install
+   the application for running tests and building the image in a subsequent
+   step.
+2. A Docker pod using the image docker. This pod is used to build the image and
+   push it to the IBM Container Registry.
+3. A kubectl pod using the image lachlanevenson/k8s-kubectl. This pod is used to
+   deploy the application to Kubernetes.
 
 ### 2. Sample Application
-The sample application is a Flask application that just returns its version.
+The sample application uses Flask and just returns its version.
 
 ```python
 from flask import Flask
@@ -37,6 +51,24 @@ def hello():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=True)
+```
+
+Create a simple test in `tests/test_version.py` that can be run in the 'test'
+step of the pipeline.
+
+```python
+import pytest
+import app
+
+@pytest.fixture
+def client():
+    client = app.app.test_client()
+    yield client
+
+
+def test_version(client):
+    req = client.get('/')
+    assert req.data == app.version
 ```
 
 #### Create the deployment manifests
@@ -73,7 +105,7 @@ spec:
 ```
 
 The canary deployment is the same as the one in app.yaml except the name is
-different.
+different and no service needs to be defined.
 
 ```yaml
 kind: Deployment
@@ -187,7 +219,6 @@ pipeline {
         }
       }
     }
-
   }
 }
 
