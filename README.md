@@ -14,8 +14,7 @@
 2. Jenkins installed on that cluster
 3. A git repository
 
-
-#### Configuring Jenkins
+#### Configure Jenkins
 
 Automatic sidecar injection needs to be disabled for the Jenkins worker pods.
 Under "Manage Jenkins" > "Configure System" > "Cloud" > "Kubernetes Pod Template"
@@ -49,7 +48,8 @@ Template" section of the Jenkins configuration.
 
 
 ### 2. Sample Application
-The sample application uses Flask and just returns its version.
+A Flask application which listens on port 8080 and returns its version will be
+used to demonstrate a canary deployment.
 
 ```python
 from flask import Flask
@@ -136,25 +136,105 @@ spec:
         imagePullPolicy: Always
 ```
 
-#### Deploy the sample application
+#### Initial deployment of the sample application
+
+Build a docker image of the application from the following Dockerfile and
+then deploy it to the cluster.
 
 ```bash
+FROM python:3-alpine
+COPY requirements.txt app.py /
+RUN pip install -r requirements.txt
+
+EXPOSE 8080
+CMD ["python", "app.py"]
+```
+
+```bash
+$ docker build -t registry.ng.bluemix.net/<namespace>/sampleapp:v1 .
+$ docker push registry.ng.bluemix.net/<namespace>/sampleapp:v1
 $ kubectl apply -f deployment/app.yaml
 ```
-This creates a Service and a Deployment. To access the application find the
-load balancer IP.
+This creates a Service and a Deployment. To access the service from outside the
+cluster create a Gateway and VirtualService with Istio.
+
+```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: sampleapp-gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: sampleapp
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - sampleapp-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: sampleapp
+        subset: prod
+        port:
+          number: 8080
+      weight: $PROD_WEIGHT
+    - destination:
+        host: sampleapp
+        subset: canary
+        port:
+          number: 8080
+      weight: $CANARY_WEIGHT
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: sampleapp
+spec:
+  host: sampleapp
+  subsets:
+  - name: prod
+    labels:
+      version: prod
+  - name: canary
+    labels:
+      version: canary
+```
+Deploy the Istio configuration. Because there is no canary deployment yet set
+the canary weight to 0 and the production weight to 100.
 
 ```bash
-$ HOST=$(kubectl get svc sampleapp -o jsonpath="{.status.loadBalancer.ingress[0].ip}")
-$ curl http://$HOST
+$ PROD_WEIGHT=100 CANARY_WEIGHT=0 envsubst < deployment/istio.yaml | kubectl apply -f -
+```
+
+Find the ingress IP address.
+
+```bash
+$ export INGRESS_HOST=$(kubectl -n istio-system get service istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+$ curl http://$INGRESS_HOST
 0.1.0
 $
 ```
 
-Commit the code.
+Commit everything so far.
 
 ```bash
-$ git add app.py deployment/
+$ git add Dockerfile app.py deployment/
 $ git commit -m "v1"
 $ git push origin master
 ```
@@ -208,8 +288,8 @@ pipeline {
       steps {
         container('docker') {
           sh 'docker login -u token -p ${REGISTRY_TOKEN} registry.ng.bluemix.net'
-          sh 'docker build -t $IMAGE_REGISTRY/demoapp:$TAG .'
-          sh 'docker push $IMAGE_REGISTRY/demoapp:$TAG'
+          sh 'docker build -t $IMAGE_REGISTRY/sampleapp:$TAG .'
+          sh 'docker push $IMAGE_REGISTRY/sampleapp:$TAG'
         }
       }
     }
@@ -219,6 +299,7 @@ pipeline {
         container('kubectl') {
           sh 'apk update && apk add gettext'
           sh "export TAG=$gitSHA" + 'envsubst < deployment/canary.yaml | kubectl apply -f -'
+          sh "export PROD_WEIGHT=95 CANARY_WEIGHT=5" + 'envsubst < deployment/istio.yaml | kubectl apply -f -'
         }
       }
     }
@@ -228,6 +309,7 @@ pipeline {
         container('kubectl') {
           sh 'apk update && apk add gettext'
           sh "export TAG=$gitSHA" + 'envsubst < deployment/app.yaml | kubectl apply -f -'
+          sh "export PROD_WEIGHT=100 CANARY_WEIGHT=0" + 'envsubst < deployment/istio.yaml | kubectl apply -f -'
         }
       }
     }
@@ -239,6 +321,7 @@ pipeline {
 ### 4. Deploy Canary Branch
 
 Create the canary branch.
+
 ```bash
 $ git checkout -b canary
 ```
@@ -253,27 +336,57 @@ Commit the changes and push the branch.
 
 ```bash
 $ git add app.py
-$ git commit -m "Version 0.2.0"
+$ git commit -m "v2"
 $ git push origin canary
 ```
 The pipeline will now run and create a new Kubernetes deployment named canary.
 
 ```bash
-$ kubectl get svc
-NAME             DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
-demoapp          1         1         1            1           1h
-demoapp-canary   1         1         1            1           1h
+$ kubectl get deployment
+NAME               DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+sampleapp          1         1         1            1           1h
+sampleapp-canary   1         1         1            1           1h
 ```
 
-Because both deployments have the same `app:` label the Service will load
-balance requests across the master and canary deployments. This does work
-without Istio but it's much less flexible.
+Because both deployments have the same `app:` label the service will load
+balance requests across the master and canary deployments. While this does
+work without Istio it's much less flexible.
 
 For example, if you wanted to send 2% of all traffic to the canary deployment
-you would need to have a minimum of 50 replicas running. Because Istio
+you would need to have a minimum of 50 replicas running. Istio decouples pod
+scaling and traffic routing.
+
+The service should now return a combination of v1 and v2 results.
+
+```bash
+$ for i in $(seq 1 20); do curl http://$INGRESS_HOST/; echo; done
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+0.2.0
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+0.1.0
+```
 
 #### 5. Deploy Master
 
 ```bash
 $ git push master origin
 ```
+Once changes are pushed to master Jenkins will build and deploy the master
+branch. It will change the route weight so that 100% of traffic will be going
+to the production deployment.

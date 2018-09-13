@@ -1,15 +1,16 @@
 apiVersion: extensions/v1beta1
 kind: Deployment
 metadata:
-  name: demoapp-canary
+  name: sampleapp-canary
 spec:
   replicas: 1
   template:
     metadata:
       labels:
-        app: demoapp
+        app: sampleapp
+        version: canary
     spec:
       containers:
-      - name: demoapp
-        image: registry.ng.bluemix.net/rmoe/demoapp:$TAG
+      - name: sampleapp
+        image: registry.ng.bluemix.net/rmoe/demoapp:canary
         imagePullPolicy: Always
