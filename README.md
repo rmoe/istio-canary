@@ -1,4 +1,81 @@
-# Canary Deployment with Jenkins and Istio
+---
+# Related publishing issue: https://github.ibm.com/IBMCode/Code-Tutorials/issues/135
+
+abstract:		# Required=true 
+
+authors:
+  - name: "Ryan Moe"
+    email: "ryan.moe@ibm.com"
+
+# cities:
+# collection:
+
+completed_date: "2018-10-04"
+
+components:
+  - "docker"
+  - "kubernetes"
+  - "istio"
+
+draft: true
+
+excerpt:		# Required=true 
+
+last_updated: "2018-10-04"
+
+meta_description:		# Required=true This is a description used for SEO purposes.
+
+meta_keywords:		# Required=true This is a comma separated list of keywords used for SEO purposes.
+
+primary_tag: "containers"
+
+pta:
+  - "cloud, container, and infrastructure"
+pwg:
+  - "containers"
+
+related_content:		# Required=false Note: zero or more related content
+  - type: announcements|articles|blogs|patterns|series|tutorials|videos
+    slug:
+  - type: announcements|articles|blogs|patterns|series|tutorials|videos
+    slug:
+
+related_links:
+  - title: "Canary Deployments"
+    url: "https://docs.gitlab.com/ee/user/project/canary_deployments.html"
+    # description:
+  - title: "Jenkins"
+    url: "https://jenkins.io/"
+   # description:
+  - title: "Istio"
+    url: "https://istio.io/"
+  - title: "IBM Cloud | Istio"
+    url: "https://www.ibm.com/cloud/info/istio"
+    description: "Manage microservices at scale while you decompose monoliths into smaller applications"
+
+# runtimes:
+
+services:
+  - "python"
+  - "container-registry"
+
+subtitle:	""
+
+tags:
+  - "microservices"
+  - "devops"
+
+title: Canary deployment with Jenkins and Istio
+
+# translators:
+type: tutorial
+---
+
+In this Code Pattern, we will show how to use Jenkins running on Kubernetes to
+do canary deployments. We will create a simple web application, deploy it to Kubernetes,
+and then update the application. The updated application will be deployed for a small
+subset of users. Once satisifed that the updated application works as expected it will be
+deployed for all users.
 
 ## Steps
 
@@ -27,31 +104,32 @@ add a new Pod Annotation with a key of `sidecar.istio.io/inject` and a value of
 Three additional containers need to be configured in the "Kubernetes Pod
 Template" section of the Jenkins configuration.
 
-1. A Python pod using the image python:3-alpine. This pod is used to install
+1. A Python container using the image python:3-alpine. This container is used to install
    the application for running tests and building the image in a subsequent
    step.
 
    ![Python container](images/python-container.png)
 
-2. A Docker pod using the image docker. This pod is used to build the image and
+1. A Docker container using the image docker. This container is used to build the image and
    push it to the IBM Container Registry. Additionally two environment
    variables must be defined. `REGISTRY_TOKEN` is a token which allows access
    to the IBM Container Registry and `IMAGE_REGISTRY` is the container registry
    path. For IBM container registry it is registry.ng.bluemix.net/<your namespace>.
 
-   ![Docker container](images/docker-container.png)
+   ![](images/docker-container.png)
 
-3. A kubectl pod using the image lachlanevenson/k8s-kubectl. This pod is used to
+1. A kubectl container using the image lachlanevenson/k8s-kubectl. This container is used to
    deploy the application to Kubernetes.
 
    ![Kubectl container](images/kubectl-container.png)
 
 
-### 2. Sample Application
+### 1. Sample Application
 A Flask application which listens on port 8080 and returns its version will be
 used to demonstrate a canary deployment.
 
-```python
+```
+python
 from flask import Flask
 
 version = b"0.1.0"
@@ -68,7 +146,8 @@ if __name__ == '__main__':
 Create a simple test in `tests/test_version.py` that can be run in the 'test'
 step of the pipeline.
 
-```python
+```
+python
 import pytest
 import app
 
@@ -119,7 +198,8 @@ spec:
 The canary deployment is the same as the one in app.yaml except the name is
 different and no service needs to be defined.
 
-```yaml
+```
+yaml
 kind: Deployment
   metadata:
 name: sampleapp-canary
@@ -138,10 +218,11 @@ spec:
 
 #### Initial deployment of the sample application
 
-Build a docker image of the application from the following Dockerfile and
+Build a Docker image of the application from the following Dockerfile and
 then deploy it to the cluster.
 
-```bash
+```
+bash
 FROM python:3-alpine
 COPY requirements.txt app.py /
 RUN pip install -r requirements.txt
@@ -150,15 +231,18 @@ EXPOSE 8080
 CMD ["python", "app.py"]
 ```
 
-```bash
+```
+bash
 $ docker build -t registry.ng.bluemix.net/<namespace>/sampleapp:v1 .
 $ docker push registry.ng.bluemix.net/<namespace>/sampleapp:v1
 $ kubectl apply -f deployment/app.yaml
 ```
+
 This creates a Service and a Deployment. To access the service from outside the
 cluster create a Gateway and VirtualService with Istio.
 
-```yaml
+```
+yaml
 apiVersion: networking.istio.io/v1alpha3
 kind: Gateway
 metadata:
@@ -215,40 +299,44 @@ spec:
     labels:
       version: canary
 ```
+
 Deploy the Istio configuration. Because there is no canary deployment yet set
 the canary weight to 0 and the production weight to 100.
 
-```bash
+```
+bash
 $ PROD_WEIGHT=100 CANARY_WEIGHT=0 envsubst < deployment/istio.yaml | kubectl apply -f -
 ```
 
 Find the ingress IP address.
 
-```bash
+```
+bash
 $ export INGRESS_HOST=$(kubectl -n istio-system get service istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 $ curl http://$INGRESS_HOST
 0.1.0
-$
 ```
 
 Commit everything so far.
 
-```bash
+```
+bash
 $ git add Dockerfile app.py deployment/
 $ git commit -m "v1"
 $ git push origin master
 ```
 
-### 3. Create the Pipeline
-Create a Multibranch Pipeline. In "Branch Sources" add a new Git source and add
+### 1. Create the pipeline
+Create a multibranch pipeline. In "Branch Sources," add a new Git source and add
 the link to your sample application repository. Under "Scan Multibranch
-Pipeline Triggers" check the box which says "Periodically if not otherwise run"
-and set the interval to 1 minute.
+Pipeline Triggers," check the box that says "Periodically if not otherwise run"
+and set the interval to **1 minute**.
 
-By default this will look for the pipeline definition in a Jenkinsfile in the
+By default, this will look for the pipeline definition in a Jenkinsfile in the
 root of the project.
 
-```groovy
+```
+groovy
 def gitSHA
 
 pipeline {
@@ -318,30 +406,35 @@ pipeline {
 
 ```
 
-### 4. Deploy Canary Branch
+### 1. Deploy Canary Branch
 
 Create the canary branch.
 
-```bash
+```
+bash
 $ git checkout -b canary
 ```
 
 Change the version in app.py to 0.2.0.
 
-```python
+```
+python
 app.version = b"0.2.0"
 ```
 
 Commit the changes and push the branch.
 
-```bash
+```
+bash
 $ git add app.py
 $ git commit -m "v2"
 $ git push origin canary
 ```
+
 The pipeline will now run and create a new Kubernetes deployment named canary.
 
-```bash
+```
+bash
 $ kubectl get deployment
 NAME               DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
 sampleapp          1         1         1            1           1h
@@ -352,13 +445,14 @@ Because both deployments have the same `app:` label the service will load
 balance requests across the master and canary deployments. While this does
 work without Istio it's much less flexible.
 
-For example, if you wanted to send 2% of all traffic to the canary deployment
+For example, if you wanted to send 2 percent of all traffic to the canary deployment
 you would need to have a minimum of 50 replicas running. Istio decouples pod
 scaling and traffic routing.
 
 The service should now return a combination of v1 and v2 results.
 
-```bash
+```
+bash
 $ for i in $(seq 1 20); do curl http://$INGRESS_HOST/; echo; done
 0.1.0
 0.1.0
@@ -382,11 +476,13 @@ $ for i in $(seq 1 20); do curl http://$INGRESS_HOST/; echo; done
 0.1.0
 ```
 
-#### 5. Deploy Master
+#### 1. Deploy master
 
-```bash
+```
+bash
 $ git push master origin
 ```
-Once changes are pushed to master Jenkins will build and deploy the master
-branch. It will change the route weight so that 100% of traffic will be going
+
+Once changes are pushed to the master, Jenkins will build and deploy the master
+branch. It will change the route weight so that 100 percent of traffic will be going
 to the production deployment.
